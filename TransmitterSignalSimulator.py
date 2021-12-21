@@ -7,24 +7,30 @@ Created on Thu Dec 16 15:50:47 2021
 import random
 import math
 import matplotlib
+import numpy
+import struct
+import time
+import sys
    
 # 定义系统全局变量
 symbol_num_per_sequence = 1024
-sequence_num = 100
 symbol_rate = 2500000
 carrier_wave_frequency = symbol_rate
 sample_rate = 10000000
 samples_per_cycle = int(sample_rate / carrier_wave_frequency)
 # 至少需要10个点才能把一个符号周期内的rrcf滤波器的曲线表达完整
-sample_per_cycle_expanded_for_conv = samples_per_cycle * (int(10 / samples_per_cycle) + 1)
+conv_dot_per_sample = (int(10 / samples_per_cycle) + 1)
+sample_per_cycle_expanded_for_conv = samples_per_cycle * conv_dot_per_sample
 sample_num_per_sequence = samples_per_cycle * symbol_num_per_sequence
 bpsk_modulation = "BPSK"
 qpsk_modulation = "QPSK"
 
 
-
-# 定义调制方式
+# 输入参数定义
 modulation_mode = qpsk_modulation
+signal_noise_ratio = -2
+rolloff_factor = 0.1
+sequence_num = 100
 
 
 ################ start 定义辅助函数 ################
@@ -116,19 +122,67 @@ def QPSK_modulator(baseband_signal):
 
 # 根升余弦滤波器。
 # 输入为符号个数symbol_num、每个符号周期内采样个数sample_per_cycle_expanded_for_conv.
-# 输出系数C = 1/sqrt(Tc)与滤波器波形
-def root_raied_cosine_filter(symbol_num, sample_per_cycle_expanded_for_conv):
-    ft = list()
-    for i in range(symbol_num*sample_per_cycle_expanded_for_conv):
-        t = i/sample_per_cycle_expanded_for_conv
-        if t == 0:
-            ft = 
+# 输出系数C = 1/sqrt(Tc)、滤波器波形rrcf、波形横坐标time_seq(time_seq表示Tc的倍数)
+def root_raied_cosine_filter(symbol_num, sample_per_cycle_expanded_for_conv, roll_ratio):
+    rrcf = list()
+    time_seq = list()
     
+    Tc = 1/symbol_rate
+    C = 1/math.sqrt(Tc)
+    
+    filter_len = 2 * symbol_num * sample_per_cycle_expanded_for_conv
+    for i in range(filter_len):
+        t = i/sample_per_cycle_expanded_for_conv - symbol_num
+        time_seq.append(t)
+        if t == 0:
+            rrcf_elem = 1 - roll_ratio + 4 * roll_ratio / math.pi
+        elif abs(abs(t) - 1/4/roll_ratio) <= 10**(-6):
+            rrcf_elem = roll_ratio/math.sqrt(2) * \
+                ((1+2/math.pi)*math.sin(math.pi/4/roll_ratio) + (1-2/math.pi)*math.cos(math.pi/4/roll_ratio))
+        else:
+            rrcf_elem = (math.sin(math.pi*t*(1-roll_ratio)) + \
+                4*t*roll_ratio*math.cos(math.pi*t*(1+roll_ratio))) /\
+                    (math.pi*t*(1-(4*t*roll_ratio)**2))
+        
+        rrcf.append(rrcf_elem)
+    
+    dt = Tc / sample_per_cycle_expanded_for_conv
+    C = C*dt
+    return C, rrcf, time_seq
+
 
 # 整形滤波器，使用根余弦滤波器. 整形滤波器与信号卷积形成发送端信号
-def pulse_shaping(modulated_signal):
-    rrcf = root_raied_cosine_filter(sample_per_cycle_expanded_for_conv * symbol_num_per_sequence)
-
+def pulse_shaping(modulated_signal_list):
+    C, rrcf, time_seq = root_raied_cosine_filter(symbol_num_per_sequence, sample_per_cycle_expanded_for_conv, rolloff_factor)
+    
+    # # 绘制整形滤波器时域波形
+    # fig = matplotlib.pyplot.figure(num = 1, figsize = (4, 4))
+    # ax1 = fig.add_subplot(111)
+    # x = time_seq[12288-100:12288+100]
+    # y = rrcf[12288-100:12288+100]
+    # ax1.plot(x, y, "b-.")
+    # ax1.set_title("Impulse response of RRCF")
+    # ax1.set_ylabel("Impulse Response")
+    # ax1.set_xlabel("t(Tc)")
+    # matplotlib.pyplot.show()
+    shaped_pulse_list = list()
+    for modulated_signal in modulated_signal_list:
+    # 信号的时间轴与滤波器的时间轴要相互对应。这里信号只有正时间轴，而rrcf有全时间轴。
+        modulated_signal_expanded = [0 for i in range(len(rrcf)-len(modulated_signal))]
+        [modulated_signal_expanded.append(modulated_signal[i]) for i in range(len(modulated_signal))]
+        shaped_pulse_full = numpy.convolve(modulated_signal_expanded, rrcf, 'full')
+        shaped_pulse_conv = shaped_pulse_full[int(len(shaped_pulse_full)/2):]
+    
+    # 卷积过后的时间轴取与信号对应的时间轴信息
+        shaped_pulse = [shaped_pulse_conv[i] for i in range(0, int(len(shaped_pulse_conv)/2), conv_dot_per_sample)]
+        shaped_pulse_list.append(shaped_pulse)
+    # fig = matplotlib.pyplot.figure(num = 1, figsize = (4, 4))
+    # ax1 = fig.add_subplot(111)
+    # ax1.plot(shaped_pulse[0+100:100+4*20], "b-.o")
+    # ax1.set_title("Shaped pulse")
+    # matplotlib.pyplot.show()
+    
+    return C, shaped_pulse_list
 
 def plot(baseband_signal, modulated_signal):
     # show modulated signal and baseband signal
@@ -149,20 +203,58 @@ def plot(baseband_signal, modulated_signal):
     matplotlib.pyplot.show()
 
 
+# 添加高斯白噪声
+def add_noise(x, snr):
+    xpower = sum([item**2 for item in x])
+    npower = xpower / (10**(snr/10)) / len(x)
+    
+    noise = numpy.random.randn(len(x)) * math.sqrt(npower)
+    
+    return list(x + noise)
+
+
 # 系统接口
 def main():
     baseband_signal = baseband_signal_generator()
     modulated_signal = digital_modulator(baseband_signal)
     
-    # 绘制调制信号与基带信号中的部分码元
-    plot(baseband_signal[0], modulated_signal[0])
+    # # 绘制调制信号与基带信号中的部分码元
+    # plot(baseband_signal[0], modulated_signal[0])
     
-    # 整形滤波，采用根升余弦滤波器
-    # shaped_pulse = pulse_shaping(modulated_signal)
+    # 整形滤波，采用根升余弦滤波器, C为输出信号的系数
+    C, shaped_pulse = pulse_shaping(modulated_signal)
+    
+    # 加性高斯白噪声
+    final_signal_list = list()
+    for pulse in shaped_pulse:
+        final_signal = add_noise(pulse, signal_noise_ratio)
+        final_signal_list.append(final_signal)
+    
+    # 编码为二进制数据并存储
+    final_signal_list_br = [[struct.pack('d', signal_dot) for signal_dot in final_signal] for final_signal in final_signal_list]
+    save_path = "D:\\[0]MyFiles\\FilesCache\\DataSet\\%s" % \
+        (modulation_mode + "_" + str(sequence_num) + "bars_" + str(signal_noise_ratio) + "dB_r" + str(rolloff_factor) + ".dat")
+    with open(save_path, 'wb') as f:
+        for final_signal in final_signal_list_br:
+            for elem in final_signal:
+                f.write(elem)
 
 
 if __name__ == "__main__":
-    main()
+    a1 = ["QPSK", "BPSK"]
+    a2 = [0.1*(i+1) for i in range(5)]
+    a3 = list(range(-2, 8, 1))
+    for h in a1:
+        modulation_mode = h
+        for hh in a2:
+            rolloff_factor = hh
+            for hhh in a3:
+                signal_noise_ratio = hhh
+                
+                start_t = time.time()
+                main()
+                end_t = time.time()
+                print("Totally cost %d seconds." % (end_t - start_t))
 
 
 
