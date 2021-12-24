@@ -163,7 +163,8 @@ def load_data():
                 fcontent = f.read()
                 # unpack信号数据与标签数据
                 data_bar += struct.unpack(sequence_num*4096*'d', fcontent[0:sequence_num*4096*8])
-                label = struct.unpack(sequence_num*4*'c', fcontent[sequence_num*4096*8:])
+                # 每个标签bar维度为4. 毕竟BPSK和QPSK最小需要4个维度来区分嘛。one-hot编码还挺稀疏的，特别占用空间，后面可以考虑使用其他编码方式。
+                label = struct.unpack(sequence_num*4*1024*'c', fcontent[sequence_num*4096*8:])
                 
                 [data_list.append(data_elem(modulation_type, snr, rolloff, \
                 data_bar[i*4096:(i+1)*4096], label[i*4:(i+1)*4])) for i in range(sequence_num)]
