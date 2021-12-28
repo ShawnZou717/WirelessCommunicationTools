@@ -24,7 +24,12 @@ def bias_variable(shape):
 
 
 def conv2d(x, w):
-    return tf.nn.conv2d(input=x, filters=w, strides=[1,1,1,1], padding='SAME')
+    h = tf.nn.conv2d(input=x, filters=w, strides=[1,1,1,1], padding='SAME')
+
+    # add global BN after each conv layer
+    mean, variance = tf.nn.moments(h, axes = [0, 1, 2])
+    return tf.nn.batch_normalization(x=h, mean=mean, variance=variance, \
+        offset = None, scale = None, variance_epsilon = 1e-7)
 
 
 def max_pool_2v2(x):
@@ -33,9 +38,13 @@ def max_pool_2v2(x):
 
 
 def Upsampling(x, interpolation='nearest'):
-    return tf.keras.layers.UpSampling2D(\
+    shape_of_x = tf.shape(x)
+    x = tf.reshape(x, [-1, shape_of_x[1], shape_of_x[3], 1])
+    sampled_h =  tf.keras.layers.UpSampling2D(\
         size=(2, 2), data_format="channels_last", \
         interpolation=interpolation)(x)
+    shape_of_h = tf.shape(sampled_h)
+    return tf.reshape(sampled_h, [-1, shape_of_h[2], 1, shape_of_h[2]])
 
 
 
@@ -66,11 +75,11 @@ class netblock:
     def run(self, x):
         h = x
         for weight, bias in zip(self.weight, self.bias):
-            h = self.nonlinear_function(conv2d(h, self.weight) + self.bias)
+            h = self.nonlinear_function(conv2d(h, weight) + bias)
         
         
         if self.sampling_method is not None:
-            sampled_h = self.sampleing_method(h)
+            sampled_h = self.sampling_method(h)
         else:
             sampled_h = h
         
@@ -113,20 +122,36 @@ class data_elem:
         self.snr = snr
         self.rolloff = rolloff
         self.seq = seq
-        self.label = label
+        self.label = [float(item) for item in label]
 
 
 class data_manager:
-    def __init__(self):
+    def __init__(self, data_set_for):
+        self.data_set_for = data_set_for
         self.epoch = None
         self.epoch_finished = 0
         self.raw_data = None
     
     def init(self):
-        self.raw_data, self.epoch = load_data()
+        self.raw_data = load_data(self.data_set_for)
     
+    def data_normalization(self):
+        for i in range(len(self.raw_data)):
+            data = self.raw_data[i]
+            data_max = max(data.seq)
+            data_min = min(data.seq)
+            for ii in range(len(data.seq)):
+                data.seq[ii] = (data.seq[ii] - data_min) / (data_max - data_min)
+
     def get_one_epoch(self):
+        self.epoch = list(self.raw_data)
         biubiubiu.shuffle(self.epoch)
+
+    def get_epoch_size(self):
+        return len(self.raw_data)
+
+    def get_batch_num(self, batch_size):
+        return int(len(self.raw_data) / batch_size)
     
     def pop_one_batch(self, batch_size):
         data = list()
@@ -135,10 +160,10 @@ class data_manager:
             data_ = self.epoch.pop()
             data.append(data_.seq)
             label.append(data_.label)
-        return 
+        return [data, label]
 
 
-def load_data():
+def load_data(data_set_for):
     data_bar = list()
     data_list = list()
     for root, dirs, files in os.walk("D:\\[0]MyFiles\\FilesCache\\DataSet"):
@@ -147,6 +172,10 @@ def load_data():
             file_contributes = filename.split("_")
             modulation_type = file_contributes[0]
             snr = file_contributes[2]
+
+            if snr not in ["3dB", "4dB"] and data_set_for == "training":
+                continue
+
             rolloff = float(file_contributes[3][1:-4])
             sequence_num = int(file_contributes[1].split("bars")[0])
             
@@ -156,13 +185,14 @@ def load_data():
                 label = struct.unpack(sequence_num*4*1024*'c', fcontent[sequence_num*4096*8:])
                 
                 [data_list.append(data_elem(modulation_type, snr, rolloff, \
-                data_bar[i*4096:(i+1)*4096], label[i*4:(i+1)*4])) for i in range(sequence_num)]
+                data_bar[i*4096:(i+1)*4096], label[i*4096:(i+1)*4096])) for i in range(sequence_num)]
     
-    return data_bar, data_list
+    return data_list
 
 
 
 def main():
+    # construct encoder
     block_tmp = netblock()
     block_tmp.set_conv_variable([[3,1,1,32], [3,1,32,32]])
     block_tmp.set_nonlinaer_function(tf.nn.leaky_relu)
@@ -179,6 +209,7 @@ def main():
         
         encoder.set_block(block_tmp)
     
+    # construct decoder
     decoder = autocoder()
     
     for i in range(5):
@@ -204,42 +235,65 @@ def main():
     
     decoder.set_block(block_tmp)
     
+    # contruct placehold to feed input and get predicted label
     tf.compat.v1.disable_eager_execution()
-    received_signal = tf.compat.v1.placeholder(tf.float64, [None, 4096, 1])
-    true_label = tf.compat.v1.placeholder(tf.float64, [None, 1024, 4])
-    keep_prob = tf.compat.v1.placeholder(tf.float64)
+    received_signal = tf.compat.v1.placeholder(tf.float32, [None, 4096])
+    x_input = tf.reshape(received_signal, [-1, 4096, 1, 1])
+    true_label = tf.compat.v1.placeholder(tf.float32, [None, 4096])
+    y_input = tf.reshape(true_label, [-1, 1024, 4])
+    keep_prob = tf.compat.v1.placeholder(tf.float32)
     
-    decoded_signal_pdf = decoder.run(encoder.run(received_signal))
-    decoded_signal_pdf = tf.nn.softmax(decoded_signal_pdf, axis = 1)
+    # run encoder and decoder, compute cross entropy
+    encoder_result = encoder.run(x_input)
+    decoded_signal_pdf = decoder.run(encoder_result)
+    decoded_signal_pdf = tf.nn.softmax(decoded_signal_pdf, axis = 3)
+    decoded_signal_pdf = tf.reshape(decoded_signal_pdf, [-1, 1024, 4])
+
+    cross_entropy = tf.reduce_mean(input_tensor=-tf.reduce_sum(input_tensor=y_input * tf.math.log(decoded_signal_pdf), axis=[1, 2]))
     
-    cross_entropy = tf.reduce_mean(input_tensor=-tf.reduce_sum(input_tensor=true_label * tf.math.log(decoded_signal_pdf), axis=[1, 2]))
-    
+    # setting trainging step and loss function
     learning_stride = 1e-2
     train_op = tf.compat.v1.train.AdamOptimizer(learning_stride).minimize(cross_entropy)
     
-    correct_prediction = tf.equal(tf.argmax(input=true_label, axis=2), tf.argmax(input=decoded_signal_pdf, axis=2))
-    accuracy = tf.reduce_mean(input_tensor=tf.cast(correct_prediction, tf.float64))
+    # computing accuracy when feed testing data
+    correct_prediction = tf.equal(tf.argmax(input=y_input, axis=2), tf.argmax(input=decoded_signal_pdf, axis=2))
+    accuracy = tf.reduce_mean(tf.reduce_sum(input_tensor=tf.cast(correct_prediction, tf.float64), axis = 1))
     
+    # initialize tensorflow
+    sess = tf.compat.v1.InteractiveSession()
     tf.compat.v1.global_variables_initializer().run()
-    data_set_size = 50000
-    epoch_num = 100
-    batch_size = 100
-    batch_num = data_set_size / batch_size
     
-    
-    training_data_manager = data_manager()
-    testing_data_manager = data_manager()
-    
+    # load data for training
+    training_data_manager = data_manager("training")
     training_data_manager.init()
+    training_data_manager.data_normalization()
+    print("\ntraning data loaded. Totally %d bars.\n" % training_data_manager.get_epoch_size())
+
+    # load data for testing
+    testing_data_manager = data_manager("testing")
+    testing_data_manager.init()
+    testing_data_manager.data_normalization()
+    print("\ntesting data loaded. Totally %d bars.\n" % testing_data_manager.get_epoch_size())
+
+    # getting data set size and set training parametres here
+    data_set_size = training_data_manager.get_epoch_size()
+    epoch_num = 100
+    batch_size = 1
+    print("The total data size to train is %d. Training %d epochs with batch size of %d" % (data_set_size, epoch_num, batch_size))
+    batch_num = training_data_manager.get_batch_num(batch_size)
     
-    
+    # start trainging
     for i in range(epoch_num):
         training_data_manager.get_one_epoch()
+        testing_data_manager.get_one_epoch()
         for j in range(batch_num):
-            batch_content = training_data_manager.pop_one_batch(batch_size) 
-            print("running.")
-            train_op.run(feed_dict={received_signal: batch_content[0], true_label: batch_content[1], keep_prob: 1.0})
-            print("one running finished.")
+            batch_content = training_data_manager.pop_one_batch(batch_size)
+            print("Training...")
+            train_op.run(feed_dict={received_signal: batch_content[0], true_label: batch_content[1], keep_prob: 0.5})
+            print("%d th training finished." % (i*epoch_num + j + 1))
+
+        train_accuracy = accuracy.eval(feed_dict={received_signal: batch_content[0], true_label: batch_content[1], keep_prob: 1.0})
+        print("\nAfter %d epoch traning, accuracy becomes %f" % (i + 1, train_accuracy))
     
     
 if __name__ == "__main__":

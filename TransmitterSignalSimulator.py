@@ -281,7 +281,7 @@ def main():
 
 
 if __name__ == "__main__":
-    a1 = ["BPSK"]
+    a1 = ["QPSK"]
     a2 = [0.1*(i+1) for i in range(5)]
     a3 = list(range(-2, 8, 1))
     for h in a1:
