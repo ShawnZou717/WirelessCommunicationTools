@@ -6,7 +6,9 @@ Created on Wed Dec 22 14:27:14 2021
 """
 import tensorflow as tf
 import random as biubiubiu
+import matplotlib.pyplot as plt
 import struct
+import time
 import os
 
 # disbale version 2 tensor
@@ -37,14 +39,18 @@ def max_pool_2v2(x):
                           strides = [1,2,1,1], padding='SAME')
 
 
-def Upsampling(x, interpolation='nearest'):
-    shape_of_x = tf.shape(x)
-    x = tf.reshape(x, [-1, shape_of_x[1], shape_of_x[3], 1])
-    sampled_h =  tf.keras.layers.UpSampling2D(\
-        size=(2, 2), data_format="channels_last", \
+def Upsampling(x, interpolation='bilinear'):
+    #shape_of_x = tf.shape(x)
+    #x = tf.reshape(x, [-1, shape_of_x[1], shape_of_x[3], 1])
+    #sampled_h =  tf.keras.layers.UpSampling2D(\
+    #    size=(2, 2), data_format="channels_last", \
+    #    interpolation=interpolation)(x)
+    #shape_of_h = tf.shape(sampled_h)
+    #return tf.reshape(sampled_h, [-1, shape_of_h[2], 1, shape_of_h[2]])
+
+    return tf.keras.layers.UpSampling2D(\
+        size=(2, 1), data_format="channels_last", \
         interpolation=interpolation)(x)
-    shape_of_h = tf.shape(sampled_h)
-    return tf.reshape(sampled_h, [-1, shape_of_h[2], 1, shape_of_h[2]])
 
 
 
@@ -175,6 +181,8 @@ def load_data(data_set_for):
 
             if snr not in ["3dB", "4dB"] and data_set_for == "training":
                 continue
+            elif snr in ["3dB", "4dB"] and data_set_for == "testing":
+                continue
 
             rolloff = float(file_contributes[3][1:-4])
             sequence_num = int(file_contributes[1].split("bars")[0])
@@ -214,7 +222,7 @@ def main():
     
     for i in range(5):
         block_tmp = netblock()
-        block_tmp.set_conv_variable([[3,1,32*2**i,32*2**i], [3,1,32*2**i,32*2**i]])
+        block_tmp.set_conv_variable([[3,1,32,32], [3,1,32,32]])
         block_tmp.set_nonlinaer_function(tf.nn.leaky_relu)
         block_tmp.set_sampling_method(Upsampling)
         
@@ -222,14 +230,14 @@ def main():
     
 
     block_tmp = netblock()
-    block_tmp.set_conv_variable([[3,1,1024,256], [3,1,256,64]])
+    block_tmp.set_conv_variable([[3,1,32,32], [3,1,32,32]])
     block_tmp.set_nonlinaer_function(tf.nn.leaky_relu)
     block_tmp.set_sampling_method(None)
     
     decoder.set_block(block_tmp)
     
     block_tmp = netblock()
-    block_tmp.set_conv_variable([[3,1,64,16], [3,1,16,4]])
+    block_tmp.set_conv_variable([[3,1,32,32], [3,1,32,32]])
     block_tmp.set_nonlinaer_function(tf.nn.leaky_relu)
     block_tmp.set_sampling_method(None)
     
@@ -246,24 +254,27 @@ def main():
     # run encoder and decoder, compute cross entropy
     encoder_result = encoder.run(x_input)
     decoded_signal_pdf = decoder.run(encoder_result)
-    decoded_signal_pdf = tf.nn.softmax(decoded_signal_pdf, axis = 3)
-    decoded_signal_pdf = tf.reshape(decoded_signal_pdf, [-1, 1024, 4])
+    weight = weight_variable([3, 1, 32, 4])
+    bias = bias_variable([4])
+    decoded_signal_pdf_after = tf.nn.softmax(conv2d(decoded_signal_pdf, weight) + bias, axis = 3)
+    decoded_signal_pdf_last = tf.reshape(decoded_signal_pdf_after, [-1, 1024, 4])
 
-    cross_entropy = tf.reduce_mean(input_tensor=-tf.reduce_sum(input_tensor=y_input * tf.math.log(decoded_signal_pdf), axis=[1, 2]))
+    cross_entropy = tf.reduce_mean(input_tensor=-tf.reduce_sum(input_tensor=y_input * tf.math.log(decoded_signal_pdf_last), axis=[2]))
     
     # setting trainging step and loss function
-    learning_stride = 1e-2
+    global_step = tf.Variable(0, trainable=False)
+    learning_stride = tf.compat.v1.train.exponential_decay(1e-3, global_step, 200, 0.5, staircase = True)
     train_op = tf.compat.v1.train.AdamOptimizer(learning_stride).minimize(cross_entropy)
     
     # computing accuracy when feed testing data
-    correct_prediction = tf.equal(tf.argmax(input=y_input, axis=2), tf.argmax(input=decoded_signal_pdf, axis=2))
-    accuracy = tf.reduce_mean(tf.reduce_sum(input_tensor=tf.cast(correct_prediction, tf.float64), axis = 1))
+    correct_prediction = tf.equal(tf.argmax(input=y_input, axis=2), tf.argmax(input=decoded_signal_pdf_last, axis=2))
+    accuracy = tf.reduce_mean(input_tensor=tf.cast(correct_prediction, tf.float64))
     
     # initialize tensorflow
     sess = tf.compat.v1.InteractiveSession()
     tf.compat.v1.global_variables_initializer().run()
     
-    # load data for training
+    # load data for training  
     training_data_manager = data_manager("training")
     training_data_manager.init()
     training_data_manager.data_normalization()
@@ -278,23 +289,48 @@ def main():
     # getting data set size and set training parametres here
     data_set_size = training_data_manager.get_epoch_size()
     epoch_num = 100
-    batch_size = 1
+    batch_size = 16
     print("The total data size to train is %d. Training %d epochs with batch size of %d" % (data_set_size, epoch_num, batch_size))
     batch_num = training_data_manager.get_batch_num(batch_size)
     
+    # plot setting
+    plt.ion()
+    plt.figure(1)
+    t_list = list()
+    accuracy_list = list()
+    loss_value_list = list()
+
     # start trainging
     for i in range(epoch_num):
         training_data_manager.get_one_epoch()
         testing_data_manager.get_one_epoch()
         for j in range(batch_num):
             batch_content = training_data_manager.pop_one_batch(batch_size)
-            print("Training...")
+            start_time = time.time()
+            print("[%s] Start training..."%(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
             train_op.run(feed_dict={received_signal: batch_content[0], true_label: batch_content[1], keep_prob: 0.5})
-            print("%d th training finished." % (i*epoch_num + j + 1))
+            end_time = time.time()
+            print("[%s] %d th training finished. Totally cost %d seconds" % (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), i*epoch_num + j + 1, end_time - start_time))
 
-        train_accuracy = accuracy.eval(feed_dict={received_signal: batch_content[0], true_label: batch_content[1], keep_prob: 1.0})
-        print("\nAfter %d epoch traning, accuracy becomes %f" % (i + 1, train_accuracy))
+            #if (i * batch_num + j + 1) % 10 == 0:
+            #    loss_value = cross_entropy.eval(feed_dict={received_signal: batch_content[0], true_label: batch_content[1], keep_prob: 0.5})
+            #    t_list.append(i * batch_num + j + 1)
+            #    loss_value_list.append(loss_value)
+            #    plt.plot(t_list, loss_value_list,c='k',ls='-.', marker='*', mec='r',mfc='w')
+            #    plt.pause(0.1)
+
+            if (i * batch_num + j + 1) % 10 == 0:
+                batch_content = testing_data_manager.pop_one_batch(batch_size)
+                train_accuracy = accuracy.eval(feed_dict={received_signal: batch_content[0], true_label: batch_content[1], keep_prob: 1.0})
+
+                t_list.append(i * batch_num + j + 1)
+                accuracy_list.append(train_accuracy)
+                
+                plt.plot(t_list, accuracy_list,c='k',ls='-.', marker='*', mec='r',mfc='w')
+                plt.pause(0.1)
     
+    plt.ioff()
+    plt.show()
     
 if __name__ == "__main__":
     main()

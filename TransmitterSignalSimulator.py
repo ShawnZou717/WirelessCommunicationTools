@@ -34,7 +34,7 @@ modulation_mode = None
 bit_num_per_symbol = None
 signal_noise_ratio = None
 rolloff_factor = None
-sequence_num = 100
+sequence_num = 2000
 
 
 ################ start 定义辅助函数 ################
@@ -147,6 +147,7 @@ def root_raied_cosine_filter(symbol_num, sample_per_cycle_expanded_for_conv, rol
 
 # 整形滤波器，使用根余弦滤波器. 整形滤波器与信号卷积形成发送端信号
 def pulse_shaping(modulated_signal_list):
+    rolloff_factor = random.randint(1, 5)*0.1
     C, rrcf, time_seq = root_raied_cosine_filter(symbol_num_per_sequence, sample_per_cycle_expanded_for_conv, rolloff_factor)
     
     ## 绘制整形滤波器时域波形
@@ -268,7 +269,7 @@ def main():
     true_label = labelize(baseband_signal)
 
     save_path = "D:\\[0]MyFiles\\FilesCache\\DataSet\\%s" % \
-        (modulation_mode + "_" + str(sequence_num) + "bars_" + str(signal_noise_ratio) + "dB_r" + str(rolloff_factor) + ".dat")
+        (modulation_mode + "_" + str(sequence_num) + "bars_" + str(signal_noise_ratio) + "dB_r" + "111111.dat")
     with open(save_path, 'wb') as f:
         for final_signal in final_signal_list_br:
             for elem in final_signal:
@@ -281,9 +282,9 @@ def main():
 
 
 if __name__ == "__main__":
-    a1 = ["QPSK"]
-    a2 = [0.1*(i+1) for i in range(5)]
-    a3 = list(range(-2, 8, 1))
+    a1 = ["BPSK","QPSK"]
+    # a2 = [0.1*(i+1) for i in range(5)]
+    a3 = list(range(-2, 9, 1))
     for h in a1:
         modulation_mode = h
 
@@ -296,15 +297,13 @@ if __name__ == "__main__":
             print("Warning! No modulation type specified. BPSK will be assigned.")
             bit_num_per_symbol = 1
 
-        for hh in a2:
-            rolloff_factor = hh
-            for hhh in a3:
-                signal_noise_ratio = hhh
-                start_t = time.time()
-                print("Started %s modulated with rolloff factor = %s and snr = %d, at %d seconds." % (modulation_mode, rolloff_factor, signal_noise_ratio, start_t))
-                main()
-                end_t = time.time()
-                print("Started %s modulated with rolloff factor = %s and snr = %d, totally cost %d seconds." % (modulation_mode, rolloff_factor, signal_noise_ratio, end_t - start_t))
+        for hhh in a3:
+            signal_noise_ratio = hhh
+            start_t = time.time()
+            print("Started %s modulated with snr = %d, at %d seconds." % (modulation_mode,  signal_noise_ratio, start_t))
+            main()
+            end_t = time.time()
+            print("Started %s modulated with snr = %d, totally cost %d seconds." % (modulation_mode,  signal_noise_ratio, end_t - start_t))
 
                 
 
