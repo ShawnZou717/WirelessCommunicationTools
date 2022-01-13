@@ -34,7 +34,7 @@ modulation_mode = None
 bit_num_per_symbol = None
 signal_noise_ratio = None
 rolloff_factor = None
-sequence_num = 2000
+sequence_num = 200
 
 
 ################ start 定义辅助函数 ################
@@ -269,7 +269,7 @@ def main():
     true_label = labelize(baseband_signal)
 
     save_path = "D:\\[0]MyFiles\\FilesCache\\DataSet\\%s" % \
-        (modulation_mode + "_" + str(sequence_num) + "bars_" + str(signal_noise_ratio) + "dB_r" + "111111.dat")
+        (modulation_mode + "_" + str(sequence_num) + "bars_" + str(signal_noise_ratio) + "dB_r" + "555555.dat")
     with open(save_path, 'wb') as f:
         for final_signal in final_signal_list_br:
             for elem in final_signal:
@@ -282,9 +282,9 @@ def main():
 
 
 if __name__ == "__main__":
-    a1 = ["BPSK","QPSK"]
+    a1 = ["QPSK"]
     # a2 = [0.1*(i+1) for i in range(5)]
-    a3 = list(range(-2, 9, 1))
+    a3 = list(range(3, 5, 1))
     for h in a1:
         modulation_mode = h
 
