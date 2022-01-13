@@ -11,13 +11,13 @@ File SignalSimulatorTools.py are to make signal processing simulation easier. On
 3. To transfer bit list to symbols with given modulation type. For instance, 00, 01, 10, 11 bit in QPSK are considered to be symbol of value 0, 1, 2, 3 respectively.
 
 ```
-bit_m = bit_message(signal, "QPSK")
+bit_m = sst.bit_message(signal, "QPSK")
 symbols = bit_m.decode()
 ```
 
 4. Generate a signal with AWGN and shaping by root raised cosine filter:
 ```
-transer = transmitter()
+transer = sst.transmitter()
 transer.set_carrier_frequency(2500000)
 transer.set_filter_span(16)
 transer.set_modulation_type("QPSK")
@@ -27,7 +27,7 @@ transer.set_snr(2.0) # if not set, will generate randomly in [-2 ,8)dB
 transer.init_setting()
 
 transer.generate_signal_by_symbol_num(symbols_num = 32)
-save_pic(transer, ".\\")
+sst.save_pic(transer, ".\\")
 ```
 you can check the pig for details. Usually looking like this:
 ![QPSK_snr7 799812394542469_r0 5_20220113165630](https://user-images.githubusercontent.com/48830288/149298047-239bc388-592a-4fd2-9d42-ff6008650f11.jpg)
