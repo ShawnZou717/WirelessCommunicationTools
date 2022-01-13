@@ -1,1 +1,1 @@
-Warnning: Currently no Licenses set for this project
+Warnning: Currently no Licenses set for this project.

@@ -353,6 +353,7 @@ class transmitter:
         _log.error("This func is not finished yet.")
         return None
 
+
 def save_pic(transer, path = ".\\"):
     if not isinstance(transer, transmitter):
         raise Exception("Wrong instance inputted in save_pic")
