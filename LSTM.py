@@ -194,26 +194,26 @@ class updated_LSTM_cell_1:
         # ht = yt * tanh(ct)
         self.ht = self.yt * tf.keras.activations.tanh(self.ct)
 
-        return self.ct, self.ht
+        return self.ct, self.ht, self.yt
 
     def run_as_first_cell(self, xt):
         batch_size = xt.get_shape().as_list()[0]
         ct_1 = tf.constant(0., shape = [batch_size, self.c_size])
         ht_1 = tf.constant(0., shape = [batch_size, self.h_size])
         
-        ct, ht = self.run(ct_1, ht_1, xt)
-        return ct, ht
+        ct, ht, yt = self.run(ct_1, ht_1, xt)
+        return ct, ht, yt
 
 
 def test_func():
     lstm_cell = updated_LSTM_cell_1()
     lstm_cell.set_x_size(512)
-    lstm_cell.set_h_size(64)
-    lstm_cell.set_c_size(64)
+    lstm_cell.set_h_size(128)
+    lstm_cell.set_c_size(32)
     lstm_cell.set_w_size(64)
 
     xt = tf.constant(1., shape=[10, 512])
-    ct, ht = lstm_cell.run_as_first_cell(xt)
+    ct, ht, yt = lstm_cell.run_as_first_cell(xt)
     pass
 
 if __name__ == "__main__":
