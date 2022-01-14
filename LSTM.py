@@ -4,13 +4,7 @@ Created on Wed Dec 22 14:27:14 2021
 
 @author: ShawnZou
 """
-from logging import raiseExceptions
 import tensorflow as tf
-import random as biubiubiu
-import matplotlib.pyplot as plt
-import struct
-import time
-import os
 
 import ExceptionDealingModule
 
@@ -170,6 +164,3 @@ class updated_LSTM_cell_1:
         self.ht = self.yt * tf.keras.activations.tanh(self.ct)
 
         return self.ct, self.ht
-
-        
-        
