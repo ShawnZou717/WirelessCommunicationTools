@@ -13,6 +13,7 @@ _code_dict = {1:"Illegal input. ",\
               100:"undefined error. "}
 _log = ExceptionDealingModule.log("E2EDemodulationModel_LSTM", _code_dict)
 
+
 def weight_variable(shape):
     initial_state = tf.random.uniform(shape, minval= -1, maxval = 1)
     return tf.Variable(initial_state)
@@ -47,7 +48,7 @@ class classic_LSTM_cell:
             raise Exception("You should input a list with 2 elements")
         
         self.forgate_gate_w = weight_variable(shape)
-        self.forgate_gate_b = bias_variable(shape[1])
+        self.forgate_gate_b = bias_variable([shape[1]])
 
     def set_update_gate(self, shape):
         if not isinstance(shape, list):
@@ -94,6 +95,11 @@ state functions are:
 """
 class updated_LSTM_cell_1:
     def __init__(self):
+        self.x_size = None
+        self.h_size = None
+        self.c_size = None
+        self.w_size = None
+
         self.it = None
         self.ft = None
         self.yt = None
@@ -112,39 +118,64 @@ class updated_LSTM_cell_1:
         self.W_xhc = None
         self.b_c = None
 
-    def set_para_i(self, shape):
-        if not isinstance(shape, list):
-            _log.error(1, "You should input a list with 2 elements")
-            raise Exception("You should input a list with 2 elements")
+    def set_x_size(self, x):
+        if not isinstance(x, int):
+            _log.error(1, "You should input a int value bigger than 0")
+            raise Exception("You should input a int value bigger than 0")
+        self.x_size = x
 
+    def set_h_size(self, x):
+        if not isinstance(x, int):
+            _log.error(1, "You should input a int value bigger than 0")
+            raise Exception("You should input a int value bigger than 0")
+        self.h_size = x
+
+    def set_c_size(self, x):
+        if not isinstance(x, int):
+            _log.error(1, "You should input a int value bigger than 0")
+            raise Exception("You should input a int value bigger than 0")
+        self.c_size = x
+
+    def set_w_size(self, x):
+        if not isinstance(x, int):
+            _log.error(1, "You should input a int value bigger than 0")
+            raise Exception("You should input a int value bigger than 0")
+        self.w_size = x
+
+    def _set_para_i(self, shape):
         self.W_xhci = weight_variable(shape)
-        self.b_i = bias_variable(shape[1])
+        self.b_i = bias_variable([shape[1]])
         
-    def set_para_f(self, shape):
-        if not isinstance(shape, list):
-            _log.error(1, "You should input a list with 2 elements")
-            raise Exception("You should input a list with 2 elements")
-
+    def _set_para_f(self, shape):
         self.W_xhcf = weight_variable(shape)
-        self.b_f = bias_variable(shape[1])
+        self.b_f = bias_variable([shape[1]])
 
-    def set_para_y(self, shape):
-        if not isinstance(shape, list):
-            _log.error(1, "You should input a list with 2 elements")
-            raise Exception("You should input a list with 2 elements")
-
+    def _set_para_y(self, shape):
         self.W_xhcy = weight_variable(shape)
-        self.b_y = bias_variable(shape[1])
+        self.b_y = bias_variable([shape[1]])
 
-    def set_para_c(self, shape):
-        if not isinstance(shape, list):
-            _log.error(1, "You should input a list with 2 elements")
-            raise Exception("You should input a list with 2 elements")
-
+    def _set_para_c(self, shape):
         self.W_xhc = weight_variable(shape)
-        self.b_c = bias_variable(shape[1])
+        self.b_c = bias_variable([shape[1]])
+
+    def _check_para(self):
+        return (self.x_size is not None) and\
+                (self.h_size is not None) and\
+                (self.c_size is not None) and\
+                (self.w_size is not None)
+
+    def _initialize_cell(self):
+        if self._check_para():
+            self._set_para_i([self.x_size+self.h_size+self.c_size, self.w_size])
+            self._set_para_f([self.x_size+self.h_size+self.c_size, self.w_size])
+            self._set_para_y([self.x_size+self.h_size+self.c_size, self.w_size])
+            self._set_para_c([self.x_size+self.h_size, self.w_size])
+        else:
+            raise Exception("Some size is not set. Not able to run cell.")
 
     def run(self, ct_1, ht_1, xt):
+        self._initialize_cell()
+
         inp1 = tf.concat([ht_1, ct_1, xt], axis = 1)
         inp2 = tf.concat([ht_1, xt], axis = 1)
 
@@ -164,3 +195,26 @@ class updated_LSTM_cell_1:
         self.ht = self.yt * tf.keras.activations.tanh(self.ct)
 
         return self.ct, self.ht
+
+    def run_as_first_cell(self, xt):
+        batch_size = xt.get_shape().as_list()[0]
+        ct_1 = tf.constant(0., shape = [batch_size, self.c_size])
+        ht_1 = tf.constant(0., shape = [batch_size, self.h_size])
+        
+        ct, ht = self.run(ct_1, ht_1, xt)
+        return ct, ht
+
+
+def test_func():
+    lstm_cell = updated_LSTM_cell_1()
+    lstm_cell.set_x_size(512)
+    lstm_cell.set_h_size(64)
+    lstm_cell.set_c_size(64)
+    lstm_cell.set_w_size(64)
+
+    xt = tf.constant(1., shape=[10, 512])
+    ct, ht = lstm_cell.run_as_first_cell(xt)
+    pass
+
+if __name__ == "__main__":
+    test_func()
