@@ -24,63 +24,6 @@ def bias_variable(shape):
     return tf.Variable(initial_state)
 
 
-class classic_LSTM_cell:
-    def __init__(self):
-        self.forget_gate = None
-        self.forgate_gate_w = None
-        self.forgate_gate_b = None
-
-        self.update_gate = None
-        self.update_gate_w_sigmoid = None
-        self.update_gate_b_sigmoid = None
-        self.update_gate_w_tanh = None
-        self.update_gate_b_tanh = None
-
-        self.output_gate = None
-        self.output_gate_w_sigmoid = None
-        self.output_gate_b_sigmoid = None
-        self.output_gate_w_tanh = None
-        self.output_gate_b_tanh = None
-
-    def set_forget_gate(self, shape):
-        if not isinstance(shape, list):
-            _log.error(1, "You should input a list with 2 elements")
-            raise Exception("You should input a list with 2 elements")
-        
-        self.forgate_gate_w = weight_variable(shape)
-        self.forgate_gate_b = bias_variable([shape[1]])
-
-    def set_update_gate(self, shape):
-        if not isinstance(shape, list):
-            _log.error(1, "You should input a list with 2 elements")
-            raise Exception("You should input a list with 2 elements")
-
-        self.update_gate_w_sigmoid = weight_variable(shape)
-        self.update_gate_w_tanh = weight_variable(shape)
-
-    def set_output_gate(self, shape):
-        if not isinstance(shape, list):
-            _log.error(1, "You should input a list with 2 elements")
-            raise Exception("You should input a list with 2 elements")
-
-        self.output_gate_w_sigmoid = weight_variable(shape)
-        self.output_gate_w_tanh = weight_variable(shape)
-
-    def run(self, ct_1, ht_1, xt):
-        inp = tf.concat([ht_1, xt], axis = 1)
-        
-        self.forget_gate = tf.keras.activations.sigmoid(tf.linalg.matmul(inp, self.forgate_gate_w) + self.forgate_gate_b) * ct_1
-
-        ut = tf.keras.activations.sigmoid(tf.linalg.matmul(inp, self.update_gate_w_sigmoid) + self.update_gate_b_sigmoid)
-        uut = tf.keras.activations.tanh(tf.linalg.matmul(inp, self.update_gate_w_tanh) + self.update_gate_b_tanh)
-        self.update_gate = self.forget_gate + (ut * uut)
-
-        ot = tf.keras.activations.sigmoid(tf.linalg.matmul(inp, self.output_gate_w_sigmoid) + self.output_gate_b_sigmoid)
-        ott = tf.keras.activations.tanh(tf.linalg.matmul(self.update_gate, self.output_gate_w_tanh) + self.output_gate_b_tanh)
-        self.output_gate = ot * ott
-
-        return self.update_gate, self.output_gate
-
 
 
 """
@@ -103,8 +46,12 @@ class updated_LSTM_cell_1:
         self.it = None
         self.ft = None
         self.yt = None
-        self.ct = None
-        self.ht = None
+        self.ct0 = None
+        self.ht0 = None
+        #self.ct = None
+        #self.ht = None
+
+        self._para_set_flag = False
 
         self.W_xhci = None
         self.b_i = None
@@ -118,28 +65,24 @@ class updated_LSTM_cell_1:
         self.W_xhc = None
         self.b_c = None
 
-    def set_x_size(self, x):
+    def set_initial_hidden_cell_state(self, ht, ct):
+        self.ht = ht
+        self.ct = ct
+
+    def set_input_size(self, x):
         if not isinstance(x, int):
             _log.error(1, "You should input a int value bigger than 0")
             raise Exception("You should input a int value bigger than 0")
         self.x_size = x
 
-    def set_h_size(self, x):
+    # there are num_units, cell_size or hidden_size, they all mean the hidden size
+    # which equal to the size of output.
+    def set_output_size(self, x):
         if not isinstance(x, int):
             _log.error(1, "You should input a int value bigger than 0")
             raise Exception("You should input a int value bigger than 0")
         self.h_size = x
-
-    def set_c_size(self, x):
-        if not isinstance(x, int):
-            _log.error(1, "You should input a int value bigger than 0")
-            raise Exception("You should input a int value bigger than 0")
         self.c_size = x
-
-    def set_w_size(self, x):
-        if not isinstance(x, int):
-            _log.error(1, "You should input a int value bigger than 0")
-            raise Exception("You should input a int value bigger than 0")
         self.w_size = x
 
     def _set_para_i(self, shape):
@@ -164,57 +107,109 @@ class updated_LSTM_cell_1:
                 (self.c_size is not None) and\
                 (self.w_size is not None)
 
-    def _initialize_cell(self):
+    def _initialize_cell(self, xt):
+        batch_size = xt.get_shape().as_list()[0]
+        self.ct0 = tf.constant(0., shape = [batch_size, self.c_size])
+        self.ht0 = tf.constant(0., shape = [batch_size, self.h_size])
+
         if self._check_para():
-            self._set_para_i([self.x_size+self.h_size+self.c_size, self.w_size])
-            self._set_para_f([self.x_size+self.h_size+self.c_size, self.w_size])
-            self._set_para_y([self.x_size+self.h_size+self.c_size, self.w_size])
-            self._set_para_c([self.x_size+self.h_size, self.w_size])
+            if not self._para_set_flag:
+                self._set_para_i([self.x_size+self.h_size+self.c_size, self.w_size])
+                self._set_para_f([self.x_size+self.h_size+self.c_size, self.w_size])
+                self._set_para_y([self.x_size+self.h_size+self.c_size, self.w_size])
+                self._set_para_c([self.x_size+self.h_size, self.w_size])
+                self._para_set_flag = True
         else:
             raise Exception("Some size is not set. Not able to run cell.")
 
-    def run(self, ct_1, ht_1, xt):
-        self._initialize_cell()
+    def initialize_hidden_state(self):
+        self.ct = None
+        self.ht = None
 
+    def run_at_t(self, xt, ct_1, ht_1):
         inp1 = tf.concat([ht_1, ct_1, xt], axis = 1)
         inp2 = tf.concat([ht_1, xt], axis = 1)
 
         # it = sigma_i(W_xi * X_t + W_hi * H_t_1 + W_ci * C_t_1 + b_i)
-        self.it = tf.keras.activations.sigmoid(tf.linalg.matmul(inp1, self.W_xhci) + self.b_i)
+        it = tf.keras.activations.sigmoid(tf.linalg.matmul(inp1, self.W_xhci) + self.b_i)
         # ft = sigma_f(W_xf * X_t + W_hf * H_t_1 + W_cf * C_t_1 + b_f)
-        self.ft = tf.keras.activations.sigmoid(tf.linalg.matmul(inp1, self.W_xhcf) + self.b_f)
+        ft = tf.keras.activations.sigmoid(tf.linalg.matmul(inp1, self.W_xhcf) + self.b_f)
 
         # ct = ft * c_t_1 + it * tanh(W_xc * X_t + W_hc * H_t_1 + b_c)
-        self.ct = self.ft * ct_1 + self.it * tf.keras.activations.tanh(tf.linalg.matmul(inp2, self.W_xhc) + self.b_c)
+        ct = ft * ct_1 + it * tf.keras.activations.tanh(tf.linalg.matmul(inp2, self.W_xhc) + self.b_c)
 
-        inp3 = tf.concat([ht_1, self.ct, xt], axis = 1)
+        inp3 = tf.concat([ht_1, ct, xt], axis = 1)
         # yt = sigma_y(W_xy * X_t + W_hy * H_t_1 + W_cy * C_t + b_y)
-        self.yt = tf.keras.activations.sigmoid(tf.linalg.matmul(inp3, self.W_xhcy) + self.b_y)
+        yt = tf.keras.activations.sigmoid(tf.linalg.matmul(inp3, self.W_xhcy) + self.b_y)
 
-        # ht = yt * tanh(ct)
-        self.ht = self.yt * tf.keras.activations.tanh(self.ct)
+        # ht = yt * tanh(C_t)
+        ht = yt * tf.keras.activations.tanh(ct)
 
-        return self.ct, self.ht, self.yt
-
-    def run_as_first_cell(self, xt):
-        batch_size = xt.get_shape().as_list()[0]
-        ct_1 = tf.constant(0., shape = [batch_size, self.c_size])
-        ht_1 = tf.constant(0., shape = [batch_size, self.h_size])
-        
-        ct, ht, yt = self.run(ct_1, ht_1, xt)
         return ct, ht, yt
+
+    def run(self, xt_list, time_step, keep_hidden_state = False):
+        self._initialize_cell(xt_list)
+        ct, ht, yt = self.run_at_t(xt_list[:, 0, :], self.ct0, self.ht0)
+        batch_size = ht.get_shape().as_list()[0]
+        hidden_size = self.h_size
+
+        if keep_hidden_state:
+            ht_all = tf.reshape(ht, [batch_size, 1, hidden_size])
+            ct_all = tf.reshape(ct, [batch_size, 1, hidden_size])
+            yt_all = tf.reshape(yt, [batch_size, 1, hidden_size])
+
+        for t in range(1, time_step, 1):
+            ct, ht, yt = self.run_at_t(xt_list[:, t, :], ct, ht)
+
+            if keep_hidden_state:
+                ht_ = tf.reshape(ht, [batch_size, 1, hidden_size])
+                ct_ = tf.reshape(ct, [batch_size, 1, hidden_size])
+                yt_ = tf.reshape(yt, [batch_size, 1, hidden_size])
+
+                ht_all = tf.concat([ht_all, ht_], axis = 1)
+                ct_all = tf.concat([ct_all, ct_], axis = 1)
+                yt_all = tf.concat([yt_all, yt_], axis = 1)
+
+        if keep_hidden_state:
+            return ht_all, ct_all, yt_all
+        else:
+            return ct, ht, yt
+
+
+
+class LSTM_layer:
+    def __init__(self, num_cells = 1, cell_type = updated_LSTM_cell_1):
+        self.lstm_cells = [cell_type() for i in range(num_cells)]
+
+    def set_size(self, input_size, output_size):
+        self.lstm_cells[0].set_input_size(input_size)
+        self.lstm_cells[0].set_output_size(output_size)
+
+        for lstm_cell in self.lstm_cells[1:]:
+            lstm_cell.set_input_size(output_size)
+            lstm_cell.set_output_size(output_size)
+
+    ## it should be noticed here that the default run method is specifically constructed for updated_LSTM_cell_1
+    #def run(self, xt):
+    #    _, ht0, yt = self._lstm_cells[0].run(xt)
+        
+    #    for lstm_cell in self._lstm_cells[1:]:
+    #        _, ht, yt = lstm_cell.run(yt)
+
+    #    return ht0, ht
+
 
 
 def test_func():
-    lstm_cell = updated_LSTM_cell_1()
-    lstm_cell.set_x_size(512)
-    lstm_cell.set_h_size(128)
-    lstm_cell.set_c_size(32)
-    lstm_cell.set_w_size(64)
+    pass
 
-    xt = tf.constant(1., shape=[10, 512])
-    ct, ht, yt = lstm_cell.run_as_first_cell(xt)
+def test_func1():
+    lstm_cell = LSTM_layer(num_cells = 2)
+    lstm_cell.set_size(input_size = 3, output_size = 2)
+
+    xt = tf.constant(1., shape=[5, 2, 3])
+    ct1, ht1, yt1 = lstm_cell.lstm_cells[0].run(xt, 2, True)
     pass
 
 if __name__ == "__main__":
-    test_func()
+    test_func1()
