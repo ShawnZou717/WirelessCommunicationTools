@@ -188,6 +188,9 @@ class LSTM_layer:
         for lstm_cell in self.lstm_cells[1:]:
             lstm_cell.set_input_size(output_size)
             lstm_cell.set_output_size(output_size)
+    
+    def get_cell_num(self):
+        return len(self.lstm_cells)
 
     ## it should be noticed here that the default run method is specifically constructed for updated_LSTM_cell_1
     #def run(self, xt):

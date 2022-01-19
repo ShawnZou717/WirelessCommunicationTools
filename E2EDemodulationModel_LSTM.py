@@ -5,6 +5,7 @@ Created on Wed Dec 22 14:27:14 2021
 @author: ShawnZou
 """
 import random as biubiubiu
+import tensorflow as tf
 
 import LSTM as lstm
 import ExceptionDealingModule
@@ -37,7 +38,18 @@ def encoder_run(layer, xt, time_step):
 
 
 def decoder_run(layer, GO, hidden_state_list, time_step):
-    ct, ht, yt = list(), list(), list()
+    cell_num = layer.get_cell_num()
+    cell_state = []
+    cell_state.append([hidden_state_list[0][0], hidden_state_list[0][1]])
+    if cell_num > 1:
+        [cell_state.append([hidden_state_list[i][0], hidden_state_list[i][1]]) for i in range(1, cell_num)]
+
+    yt = GO
+    for i in range(time_step):
+        for ii in range(cell_num):
+            ct, ht = cell_state[ii]
+            cell_state[ii][0], cell_state[ii][1], yt = layer.lstm_cells[ii].run_at_t(yt, ct, ht)
+
 
     ct, ht, yt = layer.lstm_cells[0].run_at_t(GO, hidden_state_list[0][0], hidden_state_list[0][1])
         
