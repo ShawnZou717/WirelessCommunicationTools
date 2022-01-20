@@ -36,8 +36,9 @@ state functions are:
     ht = yt * tanh(ct)
 
 """
-class updated_LSTM_cell_1:
+class updated_LSTM_cell_1():
     def __init__(self):
+        super(updated_LSTM_cell_1, self).__init__()
         self.x_size = None
         self.h_size = None
         self.c_size = None
@@ -48,6 +49,7 @@ class updated_LSTM_cell_1:
         self.yt = None
         self.ct0 = None
         self.ht0 = None
+        self._hidden_state_set_flag = False
         #self.ct = None
         #self.ht = None
 
@@ -65,9 +67,10 @@ class updated_LSTM_cell_1:
         self.W_xhc = None
         self.b_c = None
 
-    def set_initial_hidden_cell_state(self, ht, ct):
-        self.ht = ht
-        self.ct = ct
+    def set_initial_hidden_cell_state(self, ct, ht):
+        self.ht0 = ht
+        self.ct0 = ct
+        self._hidden_state_set_flag = True
 
     def set_input_size(self, x):
         if not isinstance(x, int):
@@ -107,11 +110,13 @@ class updated_LSTM_cell_1:
                 (self.c_size is not None) and\
                 (self.w_size is not None)
 
-    def _initialize_cell(self, xt):
-        batch_size = xt.get_shape().as_list()[0]
-        self.ct0 = tf.constant(0., shape = [batch_size, self.c_size])
-        self.ht0 = tf.constant(0., shape = [batch_size, self.h_size])
+    def _initialize_state(self, xt):
+        if not self._hidden_state_set_flag:
+            batch_size = tf.shape(xt)[0]
+            self.ct0 = tf.Variable(tf.zeros([batch_size, self.c_size]), trainable=False)
+            self.ht0 = tf.Variable(tf.zeros([batch_size, self.c_size]), trainable=False)
 
+    def _initialize_para(self):
         if self._check_para():
             if not self._para_set_flag:
                 self._set_para_i([self.x_size+self.h_size+self.c_size, self.w_size])
@@ -127,6 +132,7 @@ class updated_LSTM_cell_1:
         self.ht = None
 
     def run_at_t(self, xt, ct_1, ht_1):
+        self._initialize_para()
         inp1 = tf.concat([ht_1, ct_1, xt], axis = 1)
         inp2 = tf.concat([ht_1, xt], axis = 1)
 
@@ -148,9 +154,9 @@ class updated_LSTM_cell_1:
         return ct, ht, yt
 
     def run(self, xt_list, time_step, keep_hidden_state = False):
-        self._initialize_cell(xt_list)
+        self._initialize_state(xt_list)
         ct, ht, yt = self.run_at_t(xt_list[:, 0, :], self.ct0, self.ht0)
-        batch_size = ht.get_shape().as_list()[0]
+        batch_size = tf.shape(ht)[0]
         hidden_size = self.h_size
 
         if keep_hidden_state:
