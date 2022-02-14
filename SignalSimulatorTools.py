@@ -140,6 +140,7 @@ def pulse_shaping(modulated_signal, shaping_filter):
         sigma = 1
     right_index = mid_index + int(n/2) + sigma
 
+    #return modulated_signal
     return list(res[left_index:right_index])
 
 def awgn(x, snr):
@@ -336,6 +337,7 @@ class transmitter:
         noised_signal = awgn(self._shaped_signal, self._snr)
         self._noised_signal = list(noised_signal)
         return noised_signal
+        #return list(self._modulated_signal)
 
     # generate noised signal by given number of symbols
     # symbols will be generate randomly
@@ -402,26 +404,83 @@ def save_pic(transer, path = ".\\"):
     plt.savefig(path + str_l)
 
 
+def show_pic(transer):
+    if not isinstance(transer, transmitter):
+        raise Exception("Wrong instance inputted in save_pic")
+
+    signal = transer.get_noised_signal()
+    modulated_signal = transer.get_modulated_signal()
+    shaped_signal = transer.get_shaped_signal()
+    symbols = transer.get_symbols()
+    bits = transer.get_bits()
+    snr = transer.get_snr()
+    roll_ratio = transer.get_roll_factor()
+
+    rrcf = transer._rrcf
+    time_seq = transer._time_seq
+    
+    fig = plt.figure(num = 1, figsize=[24, 24])
+    ax1 = fig.add_subplot(3, 2, 1)
+    ax2 = fig.add_subplot(3, 2, 2)
+    ax3 = fig.add_subplot(3, 2, 3)
+
+    ax4 = fig.add_subplot(3, 2, 4)
+    ax5 = fig.add_subplot(3, 2, 5)
+    ax6 = fig.add_subplot(3, 2, 6)
+
+    ax1.plot(symbols, c='k',ls='', marker='*', mec='r',mfc='w')
+    ax1.set_title("symbols")
+
+    ax2.plot(bits, c='k',ls='', marker='*', mec='r',mfc='w')
+    ax2.set_title("bits")
+
+    ax3.plot(modulated_signal, c='b',ls='-.', marker='', mec='r',mfc='w')
+    ax3.set_title("modulated_signal")
+
+    ax4.plot(shaped_signal, c='b',ls='-.', marker='', mec='r',mfc='w')
+    ax4.set_title("shaped_signal")
+
+    ax5.plot(signal, c='b',ls='-.', marker='', mec='r',mfc='w')
+    ax5.set_title("signal, snr = %sdB"%(str(snr)))
+
+    ax6.plot(time_seq, rrcf, c='b',ls='-.', marker='', mec='r',mfc='w')
+    ax6.set_title("rrcf, roll ratio = %s"%(str(roll_ratio)))
+
+    str_l = "%s_snr%s_r%s_%s.jpg"%(transer.get_modulation_type(), str(snr), \
+        str(roll_ratio), time.strftime("%Y%m%d%H%M%S", time.localtime()))
+
+    plt.show()
+
+
 def test_func():
     transer = transmitter()
     transer.set_carrier_frequency(2500000)
     transer.set_filter_span(16)
     transer.set_modulation_type("QPSK")
     transer.set_oversamping_factor(4)
-    transer.set_roll_ratio(0.5)
+    transer.set_roll_ratio(0.3)
+    transer.set_snr(5)
     transer.init_setting()
 
-    transer.generate_signal_by_symbol_num(symbols_num = 32)
-    save_pic(transer)
+    transer.generate_signal_by_symbol_num(symbols_num = 7)
+    show_pic(transer)
     pass
 
 
-    
+def test1():
+    rrcf1, time_seq, C, dt = root_raied_cosine_filter(16, 250000, 4, 0.0001)
+    rrcf2, time_seq, C, dt = root_raied_cosine_filter(16, 250000, 4, 0.5)
+    rrcf3, time_seq, C, dt = root_raied_cosine_filter(16, 250000, 4, 1)
 
+    fig = plt.figure(num = 1, figsize=[24, 12])
+    ax1 = fig.add_subplot(1, 1, 1)
 
+    ax1.plot(time_seq, rrcf1, c='k',ls='-', marker='', mec='',mfc='')
 
+    ax1.plot(time_seq, rrcf2, c='b',ls='-', marker='', mec='',mfc='')
 
+    ax1.plot(time_seq, rrcf3, c='r',ls='-', marker='', mec='',mfc='')
+    plt.show()
 
 if __name__ == "__main__":
-    test_func()
-    print("test for pushing.")
+    test1()

@@ -29,21 +29,26 @@ def create_autocoder(num_cells, input_size, cell_size):
 
 
 # it should be noticed here that the default run method is specifically constructed for updated_LSTM_cell_1
-def encoder_run(layer, xt, time_step, ct, ht):
+def encoder_run(layer, xt, time_step, ct, ht, set_zero_rate):
+    hidden_state_list = []
+    
     for lstm_cell in layer.lstm_cells:
         lstm_cell.set_initial_hidden_cell_state(ct, ht)
 
 
-    ct0, ht0, yt = layer.lstm_cells[0].run(xt, time_step, True)
-        
+    ct0, ht0, yt = layer.lstm_cells[0].run(xt, time_step, True, set_zero_rate)
+    hidden_state_list.append([ct0[:, -1, :], ht0[:, -1, :]])
+
+
     for lstm_cell in layer.lstm_cells[1:]:
-        ct, ht, yt = lstm_cell.run(yt, time_step, True)
+        ct, ht, yt = lstm_cell.run(yt, time_step, True, set_zero_rate)
+        hidden_state_list.append([ct[:, -1, :], ht[:, -1, :]])
 
-    return ct0, ht0, ct, ht
+    return hidden_state_list
 
 
 
-def decoder_run(layer, GO, hidden_state_list, time_step):
+def decoder_run(layer, GO, hidden_state_list, time_step, set_zero_rate):
     symbol_num_this_modulation = sst._bits_per_symbol[modulation_type]
     final_size = 2**symbol_num_this_modulation + 2
     cell_num = layer.get_cell_num()
@@ -57,7 +62,7 @@ def decoder_run(layer, GO, hidden_state_list, time_step):
     for i in range(time_step):
         for ii in range(cell_num):
             ct, ht = cell_state[ii]
-            cell_state[ii][0], cell_state[ii][1], yt = layer.lstm_cells[ii].run_at_t(yt, ct, ht)
+            cell_state[ii][0], cell_state[ii][1], yt = layer.lstm_cells[ii].run_at_t(yt, ct, ht, set_zero_rate)
 
         output_size = yt.get_shape().as_list()[1]
         weight = lstm.weight_variable([output_size, final_size])
@@ -128,13 +133,16 @@ def get_one_batch(batch_size):
     batch_signal = list()
     symbol_list = list()
     for _ in range(batch_size):
-        symbols_num = biubiubiu.randint(5,max_symbol_len)
-        snr = 5
+        symbols_num = biubiubiu.randint(5, max_symbol_len)
+        symbols_num = 5
+        snr = 20
+        roll_ratio = 0.5
         transer = signal_generator(symbols_num = symbols_num, \
                             carrier_frequency = carrier_frequency, \
                             filter_span = filter_span, \
                             modulation_type = modulation_type, \
                             oversampling_factor = oversampling_factor, \
+                            roll_ratio = roll_ratio, \
                             snr = snr)
         batch_signal.append(transer.generate_signal_by_symbol_num(symbols_num = symbols_num))
         symbol_list.append(transer.get_symbols())
@@ -142,7 +150,22 @@ def get_one_batch(batch_size):
     batch_signal, symbol_list = padding(batch_signal, symbol_list)
     label = labelize(symbol_list)
 
+
+    #for i, signal_item in enumerate(batch_signal):
+    #    batch_signal[i] = rollover(signal_item)
+
     return batch_signal, label
+
+
+def rollover(signal_item):
+    res_signal = []
+
+    for i in range(max_encoder_time_step):
+        index = int(input_size_set/2)*i
+        res_signal.extend(signal_item[index:index+input_size_set])
+
+    return res_signal
+
 
 
 if __name__ == "__main__":
@@ -153,7 +176,9 @@ if __name__ == "__main__":
     oversampling_factor = 4
     symbol_num_this_modulation = 2**sst._bits_per_symbol[modulation_type]
 
-    max_encoder_time_step = max_symbol_len * oversampling_factor * 2
+    input_size_set = 4
+    #max_encoder_time_step = int((max_symbol_len * oversampling_factor * 2) / input_size_set * 2) - 1
+    max_encoder_time_step = int((max_symbol_len * oversampling_factor * 2) / input_size_set)
     # decoder padding signal shoule be add one since there are EOS symbol at the end.
     max_decoder_time_step = max_symbol_len + 1
 
@@ -165,30 +190,30 @@ if __name__ == "__main__":
     # network construction
     hidden_size = 128
     tf.compat.v1.disable_eager_execution()
-    encoder = create_autocoder(2, 1, hidden_size)
+    encoder = create_autocoder(2, input_size_set, hidden_size)
     # adding PADDING and EOS symbol
     decoder = create_autocoder(2, hidden_size, hidden_size)
     # setting placeholder for input and label
-    x_ = tf.compat.v1.placeholder(dtype = tf.float32, shape = [None, max_encoder_time_step])
-    x = tf.reshape(x_, [-1, max_encoder_time_step, 1])
+    x_ = tf.compat.v1.placeholder(dtype = tf.float32, shape = [None, input_size_set * max_encoder_time_step])
+    x = tf.reshape(x_, [-1, max_encoder_time_step, input_size_set])
     y = tf.compat.v1.placeholder(dtype = tf.float32, shape = [None, max_decoder_time_step, symbol_num_this_modulation + 2])
+    set_zero_rate = tf.compat.v1.placeholder(dtype = tf.float32)
     ct0 = tf.compat.v1.placeholder(dtype = tf.float32, shape = [None, hidden_size])
     ht0 = tf.compat.v1.placeholder(dtype = tf.float32, shape = [None, hidden_size])
     # set GO vector for decoder
     GO = tf.compat.v1.placeholder(dtype = tf.float32, shape = [None, hidden_size])
     
     # construct graph with encoder and decoder
-    ct000, ht000, ct, ht = encoder_run(encoder, x, max_encoder_time_step, ct0, ht0)
-    hidden_state_list = [[ct000[:, -1, :], ht000[:, -1, :]], [ct[:, -1, :], ht[:, -1, :]]]
-    yt = decoder_run(decoder, GO, hidden_state_list, max_decoder_time_step)
+    hidden_state_list = encoder_run(encoder, x, max_encoder_time_step, ct0, ht0, set_zero_rate)
+    yt = decoder_run(decoder, GO, hidden_state_list, max_decoder_time_step, set_zero_rate)
     # set loss function
     # training setting
     batch_size = 128
-    batch_num = 128
-    epoch_time = 100
+    batch_num = 64
+    epoch_time = 200
     cross_entropy = tf.reduce_mean(input_tensor=-tf.reduce_sum(input_tensor=y * tf.math.log(yt) / tf.math.log(10.), axis=[2]))
     global_step = tf.Variable(0, trainable=False)
-    learning_stride = tf.compat.v1.train.exponential_decay(5e-3, global_step, batch_num*10, 0.5, staircase = True)
+    learning_stride = tf.compat.v1.train.exponential_decay(1e-2, global_step, batch_num*10, 0.5, staircase = True)
     train_op = tf.compat.v1.train.AdamOptimizer(learning_stride).minimize(cross_entropy, global_step=global_step)
     
     correct_prediction = tf.math.equal(tf.argmax(input=y, axis=2), tf.argmax(input=yt, axis=2))
@@ -201,17 +226,17 @@ if __name__ == "__main__":
             training_set.append([signal_item, label_item])
 
 
+    plt.ion()
+    figure_full = plt.figure(num = 1, figsize = [8,16])
+    ax1 = figure_full.add_subplot(3, 1, 1)
+    ax2 = figure_full.add_subplot(3, 1, 2)
+    ax3 = figure_full.add_subplot(3, 1, 3)
     zeros_init = [[0. for i in range(hidden_size)] for ii in range(batch_size)]
     with tf.compat.v1.Session() as sess:
         tf.compat.v1.global_variables_initializer().run()
 
 
         # plot setting
-        plt.ion()
-        figure_full = plt.figure(num = 1, figsize = [12,4])
-        ax1 = figure_full.add_subplot(3, 1, 1)
-        ax2 = figure_full.add_subplot(3, 1, 2)
-        ax3 = figure_full.add_subplot(3, 1, 3)
         t_list = list()
         accuracy_list = list()
         loss_value_list = list()
@@ -228,12 +253,15 @@ if __name__ == "__main__":
                 for item in training_set[ii*batch_size:(ii+1)*batch_size]:
                     batch_signal.append(item[0])
                     label.append(item[1])
+                #batch_signal, label = get_one_batch(batch_size)
                 train_op.run(feed_dict={x_: batch_signal, y: label, \
-                    ct0: zeros_init, ht0: zeros_init, GO: zeros_init})
+                    ct0: zeros_init, ht0: zeros_init, GO: zeros_init, \
+                                        set_zero_rate: 0.1})
             print("[%s] END %dth training..."%(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), i))
             
             loss_value = cross_entropy.eval(feed_dict={x_: batch_signal, y: label, \
-                    ct0: zeros_init, ht0: zeros_init, GO: zeros_init})
+                    ct0: zeros_init, ht0: zeros_init, GO: zeros_init, \
+                                        set_zero_rate: 0.})
             t_list.append(i + 1)
             loss_value_list.append(loss_value)
             ax1.plot(t_list, loss_value_list,c='k',ls='-.', marker='*', mec='r',mfc='w')
@@ -244,7 +272,8 @@ if __name__ == "__main__":
 
             batch_signal, label = get_one_batch(batch_size)
             train_accuracy = accuracy.eval(feed_dict={x_: batch_signal, y: label, \
-                    ct0: zeros_init, ht0: zeros_init, GO: zeros_init})
+                    ct0: zeros_init, ht0: zeros_init, GO: zeros_init, \
+                                        set_zero_rate: 0.})
             accuracy_list.append(train_accuracy)
                 
             ax2.plot(t_list, accuracy_list,c='k',ls='-.', marker='*', mec='r',mfc='w')
@@ -253,9 +282,12 @@ if __name__ == "__main__":
             plt.pause(0.1)
 
             learning_rate = learning_stride.eval(feed_dict={x_: batch_signal, y: label, \
-                    ct0: zeros_init, ht0: zeros_init, GO: zeros_init})
+                    ct0: zeros_init, ht0: zeros_init, GO: zeros_init, \
+                                        set_zero_rate: 0.})
             learning_list.append(learning_rate.tolist())
             ax3.plot(t_list, learning_list, c='k',ls='-.', marker='*', mec='r',mfc='w')
             ax3.set_xlabel("Training epoch")
             ax3.set_ylabel("Learning stride")
             plt.pause(0.1)
+        plt.ioff() 
+        plt.savefig("TEMPPIG.png")

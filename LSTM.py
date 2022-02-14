@@ -131,47 +131,54 @@ class updated_LSTM_cell_1():
         self.ct = None
         self.ht = None
 
-    def run_at_t(self, xt, ct_1, ht_1):
+    def run_at_t(self, xt, ct_1, ht_1, set_zero_rate = 0.):
         self._initialize_para()
         inp1 = tf.concat([ht_1, ct_1, xt], axis = 1)
         inp2 = tf.concat([ht_1, xt], axis = 1)
 
         # it = sigma_i(W_xi * X_t + W_hi * H_t_1 + W_ci * C_t_1 + b_i)
         it = tf.keras.activations.sigmoid(tf.linalg.matmul(inp1, self.W_xhci) + self.b_i)
+        #it = tf.nn.dropout(it, set_zero_rate)
         # ft = sigma_f(W_xf * X_t + W_hf * H_t_1 + W_cf * C_t_1 + b_f)
         ft = tf.keras.activations.sigmoid(tf.linalg.matmul(inp1, self.W_xhcf) + self.b_f)
+        #ft = tf.nn.dropout(ft, set_zero_rate)
 
         # ct = ft * c_t_1 + it * tanh(W_xc * X_t + W_hc * H_t_1 + b_c)
         ct = ft * ct_1 + it * tf.keras.activations.tanh(tf.linalg.matmul(inp2, self.W_xhc) + self.b_c)
+        ct = tf.nn.dropout(ct, set_zero_rate)
 
         inp3 = tf.concat([ht_1, ct, xt], axis = 1)
         # yt = sigma_y(W_xy * X_t + W_hy * H_t_1 + W_cy * C_t + b_y)
         yt = tf.keras.activations.sigmoid(tf.linalg.matmul(inp3, self.W_xhcy) + self.b_y)
+        yt = tf.nn.dropout(yt, set_zero_rate)
 
         # ht = yt * tanh(C_t)
         ht = yt * tf.keras.activations.tanh(ct)
+        ht = tf.nn.dropout(ht, set_zero_rate)
 
         return ct, ht, yt
 
-    def run(self, xt_list, time_step, keep_hidden_state = False):
+    def run(self, xt_list, time_step, keep_hidden_state = False, set_zero_rate = 0.):
         self._initialize_state(xt_list)
         ct, ht, yt = self.run_at_t(xt_list[:, 0, :], self.ct0, self.ht0)
         batch_size = tf.shape(ht)[0]
         hidden_size = self.h_size
 
+        ht_ = tf.reshape(ht, [batch_size, 1, hidden_size])
+        ct_ = tf.reshape(ct, [batch_size, 1, hidden_size])
+        yt_ = tf.reshape(yt, [batch_size, 1, hidden_size])
         if keep_hidden_state:
-            ht_all = tf.reshape(ht, [batch_size, 1, hidden_size])
-            ct_all = tf.reshape(ct, [batch_size, 1, hidden_size])
-            yt_all = tf.reshape(yt, [batch_size, 1, hidden_size])
+            ht_all = ht_
+            ct_all = ct_
+            yt_all = yt_
 
         for t in range(1, time_step, 1):
-            ct, ht, yt = self.run_at_t(xt_list[:, t, :], ct, ht)
+            ct, ht, yt = self.run_at_t(xt_list[:, t, :], ct, ht, set_zero_rate)
+            ht_ = tf.reshape(ht, [batch_size, 1, hidden_size])
+            ct_ = tf.reshape(ct, [batch_size, 1, hidden_size])
+            yt_ = tf.reshape(yt, [batch_size, 1, hidden_size])
 
             if keep_hidden_state:
-                ht_ = tf.reshape(ht, [batch_size, 1, hidden_size])
-                ct_ = tf.reshape(ct, [batch_size, 1, hidden_size])
-                yt_ = tf.reshape(yt, [batch_size, 1, hidden_size])
-
                 ht_all = tf.concat([ht_all, ht_], axis = 1)
                 ct_all = tf.concat([ct_all, ct_], axis = 1)
                 yt_all = tf.concat([yt_all, yt_], axis = 1)
