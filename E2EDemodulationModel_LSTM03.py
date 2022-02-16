@@ -19,10 +19,19 @@ import SignalSimulatorTools as sst
 
 
 # ----------------------- Start: para setting ----------------------- #
-# start and end amplitude.
+# padding, oov, start, end token. [0, 1, 2, 3]
 # Note that input tensor should be normalized to tranfer the amplitude zone from [min, max] to [-1, 1]
-start_token_amplitude = -1.5
-end_token_amplitude = 1.5
+padding_token = 0
+oov_token = 1
+start_token = 2
+end_token = 3
+token_list_size = 8
+
+
+start_token_amplitude = -2.
+padding_token_amplitude = 1.5
+end_token_amplitude = 2.
+
 
 # Random para setting
 # carrier frequency and the number of symbols are supposed to be randomly distributed.
@@ -31,8 +40,13 @@ max_symbol_num = 10
 min_oversampling_factor = 4
 max_oversampling_factor = 4
 
+
+# Training and Testing para set
 # Number of data in Data set
 data_set_num = 10240
+BUFFER_SIZE = 32000
+BATCH_SIZE = 64
+hidden_units = 128
 # ----------------------- End: para setting ----------------------- #
 
 
@@ -54,45 +68,175 @@ def generate_signal(mode = "modulated signal"):
     for _ in range(data_set_num):
         transer.generate_signal_by_symbol_num(symbols_num = biubiubiu.randint(min_symbol_num, max_symbol_num))
         modulated_signal = transer.get_modulated_signal()
-        symbols = transer.get_symbols()
+        symbols = transer.get_symbols(base_no = 4)
 
         signal_list.append(modulated_signal)
         symbol_list.append(symbols)
 
     return signal_list, symbol_list
 
-def padding(inp):
+def normalize(inp):
+    tmp = []
+    for idx, item in enumerate(inp):
+        max_value = max(item)
+        min_value = min(item)
+        normalize_value = max([abs(max_value), abs(min_value)])
+        tmp.append(normalize_value)
+
+    normalize_value = max(tmp)
+    for idx, item in enumerate(inp):
+        for i in range(len(item)):
+            inp[idx][i] = inp[idx][i]/normalize_value
+
+def padding_add_start_and_end_token(inp, targ):    
     inp_len_list = [len(item) for item in inp]
-    max_inp_len_list = max(inp_len_list)
+    max_inp_len = max(inp_len_list)
 
     for idx, item in enumerate(inp):
+        if len(item) != max_inp_len:
+            for _ in range(max_inp_len-len(item)):
+                inp[idx].append(padding_token_amplitude)
+        inp[idx].insert(0, start_token_amplitude)
+        inp[idx].append(end_token_amplitude)
 
-def create_dateset(signal_list, symbol_list):
-    res1 = []
-    res2 = []
-    for idx, signal_bar in enumerate(signal_list):
-        res = ""
-        for item in signal_bar:
-            item = struct.pack("d", item)
-            item = base64.encodebytes(item).decode()
-            item = re.sub(r"[^0-9a-zA-Z+/]+", " ", item)
-            for i in range(0,len(item),2):
-                end = min([i+2, len(item)])
-                res += item[i:end] + " "
-        res1.append(res)
+    targ_len_list = [len(item) for item in targ]
+    max_targ_len = max(targ_len_list)
 
-    for idx, symbols in enumerate(symbol_list):
-        for idxx, item in enumerate(symbols):
-            symbols[idxx] = str(item)
-        res2.append(" ".join(symbols))
+    for idx, item in enumerate(targ):
+        if len(item) != max_targ_len:
+            for _ in range(max_targ_len-len(item)):
+                targ[idx].append(padding_token)
+        targ[idx].insert(0, start_token)
+        targ[idx].append(end_token)
 
-    f = open(".\\signal_record_test.txt", 'w')
-    for item1, item2 in zip(res1, res2):
-        f.write(item1+"\t"+item2+"\n")
-    f.close()
-    return res1, res2
+    return inp, targ
+
+def create_dateset():
+    inp_tensor, targ_tensor = generate_signal()
+    normalize(inp_tensor)
+    padding_add_start_and_end_token(inp_tensor, targ_tensor)
+
+    input_tensor_train, input_tensor_val, target_tensor_train, target_tensor_val = train_test_split(inp_tensor, targ_tensor, test_size=0.2)
+
+    for idx, item in enumerate(input_tensor_train):
+        print("%d %d"%(idx, len(item)))
+
+    for idx, item in enumerate(target_tensor_train):
+        print("%d %d"%(idx, len(item)))
+
+    train_dataset = tf.data.Dataset.from_tensor_slices((input_tensor_train, target_tensor_train))
+    train_dataset = train_dataset.shuffle(BUFFER_SIZE).batch(BATCH_SIZE, drop_remainder=True)
+
+    val_dataset = tf.data.Dataset.from_tensor_slices((input_tensor_val, target_tensor_val))
+    val_dataset = val_dataset.batch(BATCH_SIZE, drop_remainder=True)
+
+    return train_dataset, val_dataset
+
+train_dataset, val_dataset = create_dateset()
 
 # ----------------------- End: data set generating ----------------------- #
+
+
+# ----------------------- Start: build encoder ----------------------- #
+class Encoder(tf.keras.Model):
+    def __init__(self, enc_units, batch_sz):
+        super(Encoder, self).__init__()
+        self.batch_sz = batch_sz
+        self.enc_units = enc_units
+        self.conv_filtering = tf.keras.layers.Conv1D(32, 3, padding = 'same', activation = 'relu')
+
+        ##-------- LSTM layer in Encoder ------- ##
+        self.lstm_layer1 = tf.keras.layers.LSTM(self.enc_units,
+                                       return_sequences=True,
+                                       return_state=True,
+                                       recurrent_initializer='glorot_uniform',
+                                       dropout = 0.2)
+
+        self.lstm_layer2 = tf.keras.layers.LSTM(self.enc_units,
+                                       return_sequences=True,
+                                       return_state=True,
+                                       recurrent_initializer='glorot_uniform',
+                                       dropout = 0.2)
+
+
+
+    def call(self, x, initial_state, training = False):
+        x = self.conv_filtering(x)
+        output1, h1, c1 = self.lstm_layer1(x, initial_state = initial_state, training = training)
+        output2, h2, c2 = self.lstm_layer2(output1, initial_state = initial_state, training = training)
+        return output2, h1, c1, h2, c2
+
+    def initialize_hidden_state(self):
+        return [tf.zeros((self.batch_sz, self.enc_units)), tf.zeros((self.batch_sz, self.enc_units))]
+
+encoder = Encoder(hidden_units, BATCH_SIZE)
+# ----------------------- End: build encoder ----------------------- #
+
+
+
+# ----------------------- Start: build decoder ----------------------- #
+class Decoder(tf.keras.Model):
+  def __init__(self, dec_units, batch_sz, attention_type='luong'):
+    super(Decoder, self).__init__()
+    self.batch_sz = batch_sz
+    self.dec_units = dec_units
+    self.attention_type = attention_type
+
+    # convolution Layer
+    self.conv_filtering = tf.keras.layers.Conv1D(32, 3, padding = 'same', activation = 'relu')
+
+    #Final Dense layer on which softmax will be applied
+    self.fc = tf.keras.layers.Dense(token_list_size)
+
+    # Define the fundamental cell for decoder recurrent structure
+    self.decoder_rnn_cell1 = tf.keras.layers.LSTMCell(self.dec_units, dropout = 0.2)
+    self.decoder_rnn_cell2 = tf.keras.layers.LSTMCell(self.dec_units, dropout = 0.2)
+
+    # Sampler
+    self.sampler = tfa.seq2seq.sampler.TrainingSampler()
+
+    # Create attention mechanism with memory = None
+    self.attention_mechanism = self.build_attention_mechanism(self.dec_units, 
+                                                              None, self.batch_sz*[max_time_step], self.attention_type)
+
+    # Wrap attention mechanism with the fundamental rnn cell of decoder
+    self.rnn_cell = self.build_rnn_cell(batch_sz)
+    #self.rnn_cell = tf.keras.layers.StackedRNNCells([tf.keras.layers.LSTMCell(self.dec_units, dropout = 0.2), self.build_rnn_cell(batch_sz)])
+
+    # Define the decoder with respect to fundamental rnn cell
+    self.decoder = tfa.seq2seq.BasicDecoder(self.rnn_cell, sampler=self.sampler, output_layer=self.fc)
+    #self.decoder = tfa.seq2seq.BasicDecoder(self.decoder_rnn_cell, sampler=self.sampler, output_layer=self.fc)
+
+  def build_rnn_cell(self, batch_sz):
+    rnn_cell = tfa.seq2seq.AttentionWrapper(self.decoder_rnn_cell, 
+                                  self.attention_mechanism, attention_layer_size=self.dec_units)
+    return rnn_cell
+
+  def build_attention_mechanism(self, dec_units, memory, memory_sequence_length, attention_type='luong'):
+    # ------------- #
+    # typ: Which sort of attention (Bahdanau, Luong)
+    # dec_units: final dimension of attention outputs 
+    # memory: encoder hidden states of shape (batch_size, max_length_input, enc_units)
+    # memory_sequence_length: 1d array of shape (batch_size) with every element set to max_length_input (for masking purpose)
+
+    if(attention_type=='bahdanau'):
+      return tfa.seq2seq.BahdanauAttention(units=dec_units, memory=memory, memory_sequence_length=memory_sequence_length)
+    else:
+      return tfa.seq2seq.LuongAttention(units=dec_units, memory=memory, memory_sequence_length=memory_sequence_length)
+
+  def build_initial_state(self, batch_sz, encoder_state, Dtype):
+    decoder_initial_state = self.rnn_cell.get_initial_state(batch_size=batch_sz, dtype=Dtype)
+    #decoder_initial_state = self.decoder_rnn_cell.get_initial_state(inputs = encoder_state, batch_size=batch_sz, dtype=Dtype)
+    decoder_initial_state = decoder_initial_state.clone(cell_state=encoder_state)
+    return decoder_initial_state
+
+
+  def call(self, inputs, initial_state, training = False):
+    x = self.embedding(inputs)
+    outputs, _, _ = self.decoder(x, initial_state=initial_state, sequence_length=self.batch_sz*[max_length_output-1], training = training)
+    return outputs
+# ----------------------- End: build decoder ----------------------- #
+
 
 signal_list, symbol_list = generate_signal()
 str_inp, str_label = create_dateset(signal_list, symbol_list)

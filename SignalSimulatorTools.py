@@ -267,8 +267,11 @@ class transmitter:
     def get_bits(self):
         return list(self._bits)
 
-    def get_symbols(self):
-        return list(self._symbols)
+    def get_symbols(self, base_no = 0):
+        res = list(self._symbols)
+        for idx, value in enumerate(res):
+            res[idx] += base_no
+        return res
 
     def get_propotion(self):
         return dict(self._propotion)
