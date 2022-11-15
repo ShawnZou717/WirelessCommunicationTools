@@ -1,4 +1,4 @@
-File SignalSimulatorTools.py are to make signal processing simulation easier. One can accomplish BPSK/QPSK modulation, add noise or shaping filtering after several simple codes. Following are the useful details about this file:
+File **SignalSimulatorTools.py** are to make signal processing simulation easier. One can accomplish BPSK/QPSK modulation, add noise or shaping filtering after several simple codes. Following are the useful details about this file:
 
 1. To use this file, use the import code:
 
